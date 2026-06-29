@@ -311,6 +311,19 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                     "This is used to shuffle the prompts and also for the random sampling of the prompts."
                 ),
             )
+            parser.add_argument(
+                "--transfer-backend",
+                type=str,
+                choices=["ray", "mooncake"],
+                default="ray",
+                help="Backend used for rollout data put/get transfer.",
+            )
+            parser.add_argument(
+                "--mooncake-store-init-kwargs",
+                type=json.loads,
+                default=None,
+                help="JSON kwargs used to initialize MooncakeDistributedStore for rollout transfer.",
+            )
 
             # sampling
             parser.add_argument(

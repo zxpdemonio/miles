@@ -2,6 +2,7 @@ import ray
 
 from miles.ray.placement_group import create_placement_groups, create_rollout_manager, create_training_models
 from miles.utils.arguments import parse_args
+from miles.utils.data_transfer import cleanup_transfer_refs
 from miles.utils.logging_utils import configure_logger
 from miles.utils.misc import should_run_periodic_action
 from miles.utils.tracking_utils import init_tracking
@@ -72,13 +73,16 @@ def train(args):
         if args.offload_rollout:
             ray.get(rollout_manager.offload.remote())
 
-        if args.use_critic:
-            critic_train_handle = critic_model.async_train(rollout_id, rollout_data_ref)
-            if rollout_id >= args.num_critic_only_steps:
+        try:
+            if args.use_critic:
+                critic_train_handle = critic_model.async_train(rollout_id, rollout_data_ref)
+                if rollout_id >= args.num_critic_only_steps:
+                    ray.get(actor_model.async_train(rollout_id, rollout_data_ref))
+                ray.get(critic_train_handle)
+            else:
                 ray.get(actor_model.async_train(rollout_id, rollout_data_ref))
-            ray.get(critic_train_handle)
-        else:
-            ray.get(actor_model.async_train(rollout_id, rollout_data_ref))
+        finally:
+            cleanup_transfer_refs(args, rollout_data_ref)
 
         if should_run_periodic_action(rollout_id, args.save_interval, num_rollout_per_epoch, args.num_rollout):
             save(rollout_id)
