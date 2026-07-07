@@ -1,11 +1,38 @@
 from typing import Any
 
-import ray
 import torch
 
 from miles.utils.ray_utils import Box
 from miles.utils.seqlen_balancing import get_seqlen_balanced_partitions
 from miles.utils.types import Sample
+
+
+ROLLOUT_DATA_TENSOR_DTYPES = {
+    "tokens": "int32",
+    "loss_masks": "int32",
+    "rollout_log_probs": "float32",
+    "teacher_log_probs": "float32",
+    "opd_reverse_kl": "float32",
+    "rollout_routed_experts": "int32",
+    "rollout_indexer_topk": "int32",
+}
+
+ROLLOUT_DATA_FIELD_SCHEMA_SPECS = {
+    **{field: ("typed_ragged", None) for field in ROLLOUT_DATA_TENSOR_DTYPES},
+    "partition": ("ndarray", "int64"),
+    "response_lengths": ("ndarray", "int64"),
+    "rewards": ("ndarray", "float32"),
+    "truncated": ("ndarray", "int64"),
+    "round_number": ("ndarray", "int64"),
+    "sample_indices": ("ndarray", "int64"),
+    "multimodal_train_inputs": ("ragged_tensor_dict", None),
+    "prompt": ("msgpack_ragged", None),
+    "metadata": ("msgpack_ragged", None),
+    "weight_versions": ("msgpack_ragged", None),
+    "raw_reward": ("auto", None, "meta_info"),
+    "total_lengths": ("auto", None, "meta_info"),
+    "dynamic_global_batch_size": ("auto", None, "meta_info"),
+}
 
 
 def convert_samples_to_train_data(
@@ -172,5 +199,34 @@ def split_train_data_by_dp(args, data, dp_size):
             if key not in data:
                 continue
             rollout_data[key] = data[key]
-        rollout_data_refs.append(Box(ray.put(rollout_data)))
+        if getattr(args, "transfer_backend", "ray") == "mooncake":
+            from miles.utils.data_transfer import put_mooncake_rollout_data
+
+            rollout_data_refs.append(
+                put_mooncake_rollout_data(
+                    args,
+                    rollout_data,
+                    partition=f"dp{i}",
+                    field_schemas=_rollout_field_schemas_for_data(rollout_data),
+                )
+            )
+        else:
+            import ray
+
+            rollout_data_refs.append(Box(ray.put(rollout_data)))
     return rollout_data_refs
+
+
+def _rollout_field_schemas_for_data(data):
+    from mooncake.structured_object_store import FieldSchema
+
+    schemas = {}
+    for field, spec in ROLLOUT_DATA_FIELD_SCHEMA_SPECS.items():
+        if field not in data:
+            continue
+        codec, dtype, section = (*spec, "non_tensor_batch")[:3]
+        metadata = {"section": section}
+        if dtype:
+            metadata["dtype"] = dtype
+        schemas[field] = FieldSchema(codec=codec, nullable=False, metadata=metadata)
+    return schemas

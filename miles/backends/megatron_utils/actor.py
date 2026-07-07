@@ -278,12 +278,23 @@ class MegatronTrainRayActor(TrainRayActor):
             rollout_data = get_rollout_data(self.args, rollout_data_ref)
             if self.args.debug_rollout_only:
                 log_rollout_data(rollout_id, self.args, rollout_data)
+                if getattr(self.args, "transfer_backend", "ray") == "mooncake":
+                    from miles.utils.data_transfer import release_mooncake_rollout_data
+
+                    release_mooncake_rollout_data(self.args, rollout_data)
                 return
 
         if self.role == "critic":
-            return self.train_critic(rollout_id, rollout_data)
+            result = self.train_critic(rollout_id, rollout_data)
         else:
-            return self.train_actor(rollout_id, rollout_data)
+            result = self.train_actor(rollout_id, rollout_data)
+
+        if getattr(self.args, "transfer_backend", "ray") == "mooncake":
+            from miles.utils.data_transfer import release_mooncake_rollout_data
+
+            release_mooncake_rollout_data(self.args, rollout_data)
+
+        return result
 
     def train_critic(self, rollout_id: int, rollout_data: RolloutBatch) -> None:
         # Create data iterator for log_probs and train.

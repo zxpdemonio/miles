@@ -6,7 +6,6 @@ import random
 import re
 
 import numpy as np
-import ray
 
 try:
     import pyarrow.parquet as pq
@@ -274,7 +273,15 @@ def get_minimum_num_micro_batch_size(total_lengths, max_tokens_per_gpu):
 
 def process_rollout_data(args, rollout_data_ref, dp_rank, dp_size):
     assert len(rollout_data_ref) == dp_size
-    rollout_data = ray.get(rollout_data_ref[dp_rank].inner)
+    ref = rollout_data_ref[dp_rank]
+    if getattr(args, "transfer_backend", "ray") == "mooncake":
+        from miles.utils.data_transfer import get_mooncake_rollout_data
+
+        rollout_data = get_mooncake_rollout_data(args, ref)
+    else:
+        import ray
+
+        rollout_data = ray.get(ref.inner)
 
     partition = rollout_data.pop("partition")
     total_lengths = rollout_data["total_lengths"]
